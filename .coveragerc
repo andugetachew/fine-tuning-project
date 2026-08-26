@@ -1,0 +1,10 @@
+[run]
+omit =
+    src/train.py
+    src/training/trainer.py
+    src/training/merge_adapter.py
+    src/evaluation/evaluate.py
+
+[report]
+exclude_lines =
+    pragma: no cover

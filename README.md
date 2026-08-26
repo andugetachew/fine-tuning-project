@@ -1,6 +1,6 @@
 # Backend Engineering Assistant — QLoRA Fine-Tuning Project
 
-![Tests](https://img.shields.io/badge/tests-18%20passed-brightgreen) ![Python](https://img.shields.io/badge/python-3.12-blue) ![FastAPI](https://img.shields.io/badge/FastAPI-enabled-009688) ![PyTorch](https://img.shields.io/badge/PyTorch-enabled-EE4C2C) ![PEFT](https://img.shields.io/badge/PEFT-LoRA-orange) ![Docker](https://img.shields.io/badge/Docker-enabled-blue) ![License](https://img.shields.io/badge/license-MIT-yellow)
+![Tests](https://img.shields.io/badge/tests-38%20passed-brightgreen) ![Coverage](https://img.shields.io/badge/coverage-86%25-brightgreen) ![Python](https://img.shields.io/badge/python-3.12-blue) ![FastAPI](https://img.shields.io/badge/FastAPI-enabled-009688) ![PyTorch](https://img.shields.io/badge/PyTorch-enabled-EE4C2C) ![PEFT](https://img.shields.io/badge/PEFT-LoRA-orange) ![Docker](https://img.shields.io/badge/Docker-enabled-blue) ![License](https://img.shields.io/badge/license-MIT-yellow)
 
 A QLoRA fine-tune of Qwen2.5-1.5B-Instruct, trained on 24 real, verified
 backend engineering incidents from my own projects — Django/DRF, PostgreSQL
@@ -14,6 +14,7 @@ Raw Q&A (data/raw/)
 -> Data prep (src/data/prepare_dataset.py) -> ChatML train/eval splits
 -> QLoRA fine-tuning (src/train.py, Colab GPU) -> LoRA adapter
 -> Evaluation (src/evaluation/evaluate.py) -> base vs fine-tuned comparison
+-> Aggregate stats (src/evaluation/stats.py) -> bootstrap CI + significance test
 -> Inference API (api/main.py) -> Docker
 
 
@@ -32,11 +33,26 @@ Raw Q&A (data/raw/)
   and `ai_eval_framework` (delegates to a separate deployed project of mine).
   The latter two cleanly self-report as unavailable when their credentials
   aren't present, rather than crashing or silently no-op'ing.
+- **Statistical rigor**: bootstrap confidence intervals and a paired
+  Wilcoxon significance test on base-vs-fine-tuned comparisons, plus a
+  multi-run comparison tool for comparing different training runs against
+  each other — not just raw score averages.
 - **Real serving**: FastAPI inference API with live base/fine-tuned
-  comparison mode (`use_finetuned: true/false` on the same endpoint).
-- **Tested, not just run**: 18 tests covering data transformation
-  correctness (not just "doesn't crash"), scorer behavior, request
-  validation, and config loading.
+  comparison mode (`use_finetuned: true/false` on the same endpoint), a
+  streaming (`/generate/stream`) endpoint, and request logging that builds
+  a real corpus of candidate future training examples.
+- **Production-style deployment path**: LoRA adapter merging
+  (`merge_and_unload()`) for single-artifact inference, alongside the
+  default swappable-adapter path.
+- **Auto-generated model card**: documents base model, LoRA config, and
+  known limitations directly from the actual training config — not
+  hand-written and prone to drifting out of sync.
+- **Tested, not just run**: 38 tests, 86% coverage on unit-testable code —
+  data transformation correctness, scorer behavior (including real calls
+  to a live deployed evaluation service), statistics computation, API
+  routing with mocked models, and CLI tools. See "Test coverage" below for
+  what's intentionally excluded and why.
+- **CI**: GitHub Actions runs the full test suite on every push.
 
 ## Results
 
@@ -44,15 +60,26 @@ Trained for 3 epochs on 21 examples (3 held out for eval). Eval loss
 decreased steadily across all 3 epochs (3.008 → 2.833 → 2.787), confirming
 genuine learning rather than noise.
 
-On semantic-similarity evaluation against held-out examples, results were
-mixed rather than a clean win for the fine-tuned model — expected at this
-scale, since the base model already handles generic backend troubleshooting
-competently. Manual inspection showed the fine-tuned model's answers were
-more structured and closer to the training data's actual conventions
-(specific commands, consistent diagnostic ordering) without a large jump in
-similarity score. This is reported honestly rather than oversold: a
-meaningful, statistically significant capability shift would need a larger
-training and eval set than 24/3 examples.
+On semantic-similarity evaluation against 3 held-out examples:
+
+| | Mean | 95% CI |
+|---|---|---|
+| Base model | 0.613 | [0.520, 0.704] |
+| Fine-tuned model | 0.627 | [0.531, 0.693] |
+
+A paired Wilcoxon signed-rank test found this difference **not statistically
+significant** (p = 0.75) — expected and honest at this sample size (n=3).
+The confidence intervals overlap substantially, so no claim of measurable
+improvement is being made here. Manual inspection of individual responses
+showed the fine-tuned model's answers were more structured and closer to
+the training data's conventions (specific commands, consistent diagnostic
+ordering), but this qualitative observation doesn't yet have statistical
+backing. A larger training and eval set (50-100+ examples each) would be
+the natural next step to detect a real effect if one exists.
+
+Full statistical methodology (bootstrap confidence intervals, Wilcoxon
+significance testing) is in `src/evaluation/stats.py`. See `MODEL_CARD.md`
+for full training/architecture details.
 
 ## Setup
 
@@ -89,21 +116,65 @@ Scorer is set via `evaluation.scorer_type` in `configs/qlora.yaml`
 instance) but respects `AI_EVAL_FRAMEWORK_URL`/`AI_EVAL_FRAMEWORK_API_KEY`
 if set.
 
+### Aggregate statistics & model card
+
+```bash
+python -m src.evaluation.stats
+python -m src.evaluation.model_card
+```
+Produces `outputs/evaluation/aggregate_stats.json` (bootstrap CIs + Wilcoxon
+significance test) and `MODEL_CARD.md` (auto-generated from the actual
+training config).
+
+### Comparing multiple runs
+
+```bash
+python -m src.evaluation.compare_runs --runs r16=outputs/eval_r16.json r32=outputs/eval_r32.json
+```
+Same statistical rigor as base-vs-fine-tuned, generalized to compare any
+number of named evaluation runs (e.g. different LoRA ranks or training
+configs) against each other.
+
 ## 4. Serve
 
 ```bash
 uvicorn api.main:app --reload
 ```
-`POST /generate` with `{"prompt": "...", "use_finetuned": true}`.
+- `POST /generate` with `{"prompt": "...", "use_finetuned": true}` — full response.
+- `POST /generate/stream` — same request shape, streams tokens as they generate.
+- Every request/response is logged to `outputs/predictions/request_log.jsonl`
+  as a growing pool of candidate future training examples.
 
 ## 5. Test
 
 ```bash
-pytest -v
+pytest --cov=src --cov=api --cov-report=term-missing
 ```
-18/18 passing.
+38/38 passing, 86% coverage.
 
-## 6. Docker
+### Test coverage
+
+`.coveragerc` excludes `src/train.py`, `src/training/trainer.py`,
+`src/training/merge_adapter.py`, and `src/evaluation/evaluate.py` from
+coverage reporting. These require downloading and running a real ~3GB
+model to exercise meaningfully — unit-testing them would mean either
+downloading the model in CI (slow, costly) or mocking so heavily the test
+verifies nothing real. They're instead validated by actually running the
+training/evaluation pipeline end to end (see Results above), the same
+approach used for the equivalent training scripts in my `ai-eval-framework`
+project.
+
+## 6. Merge adapter (optional, production-style deployment)
+
+```bash
+python -m src.training.merge_adapter
+```
+Bakes the LoRA weights into the base model, producing a single standalone
+model directory (`models/merged/`) — faster inference, simpler deployment,
+at the cost of losing the ability to swap adapters without reloading the
+full model.
+
+## 7. Docker
 
 ```bash
 docker build -t backend-assistant .
@@ -127,8 +198,6 @@ from Hugging Face on first container start; mount a persistent volume at
 ## 📄 License
 
 MIT License
-
----
 
 ---
 

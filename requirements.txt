@@ -13,3 +13,4 @@ python-dotenv
 pytest
 anthropic>=0.39.0
 requests>=2.31.0
+scipy>=1.11.0

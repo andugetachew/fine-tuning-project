@@ -1,0 +1,24 @@
+{
+  "scorer_type": "semantic_similarity",
+  "num_examples": 3,
+  "num_scored": 3,
+  "base": {
+    "mean": 0.6132199962933859,
+    "ci_low": 0.5196122527122498,
+    "ci_high": 0.7035797834396362,
+    "n": 3
+  },
+  "finetuned": {
+    "mean": 0.6268864870071411,
+    "ci_low": 0.5308787822723389,
+    "ci_high": 0.6925052404403687,
+    "n": 3
+  },
+  "significance": {
+    "test": "wilcoxon",
+    "statistic": 2.0,
+    "p_value": 0.75,
+    "significant": false,
+    "note": "p < 0.05 suggests the difference is unlikely due to chance, though a sample this small has low statistical power"
+  }
+}

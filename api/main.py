@@ -14,6 +14,10 @@ from contextlib import asynccontextmanager
 import torch
 from fastapi import FastAPI, HTTPException
 
+from fastapi.responses import StreamingResponse
+from threading import Thread
+from transformers import TextIteratorStreamer
+
 from api.schemas import GenerateRequest, GenerateResponse, HealthResponse
 from src.constants import SYSTEM_PROMPT
 from src.training.model_utils import load_config, load_base_model_and_tokenizer, load_finetuned_model
@@ -73,8 +77,41 @@ def _generate(model, tokenizer, prompt: str, system_prompt: str, max_new_tokens:
             pad_token_id=tokenizer.pad_token_id,
         )
     generated = output[0][inputs["input_ids"].shape[1]:]
+    import json
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    def _log_request(prompt: str, response_text: str, model_used: str):
+        log_path = Path("outputs/predictions/request_log.jsonl")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "prompt": prompt, "response": response_text, "model_used": model_used,
+            }) + "\n")
     return tokenizer.decode(generated, skip_special_tokens=True)
 
+
+@app.post("/generate/stream")
+def generate_stream(request: GenerateRequest):
+    system_prompt = request.system_prompt or SYSTEM_PROMPT
+    if request.use_finetuned and MODELS.get("finetuned") is None:
+        raise HTTPException(status_code=503, detail="Fine-tuned adapter is not loaded.")
+    model, tokenizer = (MODELS["finetuned"], MODELS["finetuned_tokenizer"]) if request.use_finetuned else (MODELS["base"], MODELS["base_tokenizer"])
+
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": request.prompt}]
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+    generation_kwargs = dict(**inputs, max_new_tokens=request.max_new_tokens, streamer=streamer, do_sample=request.temperature > 0, temperature=max(request.temperature, 1e-5), pad_token_id=tokenizer.pad_token_id)
+    Thread(target=model.generate, kwargs=generation_kwargs).start()
+
+    def token_stream():
+        for token in streamer:
+            yield token
+
+    return StreamingResponse(token_stream(), media_type="text/plain")
 
 @app.get("/health", response_model=HealthResponse)
 def health():
