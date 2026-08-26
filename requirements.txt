@@ -14,3 +14,7 @@ pytest
 anthropic>=0.39.0
 requests>=2.31.0
 scipy>=1.11.0
+sentence-transformers>=2.2.0
+anthropic>=0.39.0
+requests>=2.31.0
+scipy>=1.11.0
