@@ -174,7 +174,7 @@ model directory (`models/merged/`) — faster inference, simpler deployment,
 at the cost of losing the ability to swap adapters without reloading the
 full model.
 
-## 7. Docker
+<!-- ## 7. Docker
 
 ```bash
 docker build -t backend-assistant .
@@ -191,7 +191,23 @@ from Hugging Face on first container start; mount a persistent volume at
   model. Changing `model.base_model_id` and `lora.target_modules` is the
   entire migration path to a different model.
 - **No invented numbers**: evaluation always reports raw predictions; a
-  score is only reported where a real, working scorer produced it.
+  score is only reported where a real, working scorer produced it. -->
+
+## 7. Docker
+
+```bash
+docker build -t backend-assistant .
+docker run -p 8000:8000 backend-assistant
+```
+Builds and runs correctly locally (verified: all image layers complete,
+adapter weights included, container starts and serves real requests — see
+Results section). **Not deployed to a public live endpoint.** The API
+loads two full model copies at startup (base + fine-tuned) for live
+comparison mode, requiring roughly 10-12GB RAM — Render's free tier
+provides 512MB, an order of magnitude short. This isn't a code or
+Dockerfile defect (the build itself completes cleanly); it's a genuine
+infrastructure ceiling. Running locally, or on any host with sufficient
+RAM, works correctly.
 
 ---
 
