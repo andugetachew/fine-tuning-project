@@ -141,3 +141,4 @@ def generate(request: GenerateRequest):
         model, tokenizer, request.prompt, system_prompt, request.max_new_tokens, request.temperature
     )
     return GenerateResponse(response=response_text, model_used=label, prompt=request.prompt)
+
